@@ -925,7 +925,15 @@ module BlueHydra
                 if magic_word == 'bluetooth'
                   if @rssi_data
                     @rssi_data_mutex.synchronize {
-                      client.puts JSON.generate(@rssi_data)
+                      client.puts JSON.generate(
+                        @rssi_data.slice(*BlueHydra.config["ui_inc_filter_mac"]).map do |address, address_meta|
+                          datas = @rssi_data[address].select{|d| d[:ts] > Time.now.to_i - 20}
+                          datas.map do |datum|
+                            datum[:mac] = address
+                            datum
+                          end
+                        end
+                      )
                     }
                   end
                 end
