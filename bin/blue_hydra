@@ -33,7 +33,7 @@ OptionParser.new do |opts|
   opts.on("--rssi-api", "Open 127.0.0.1:1124 to allow other processes to poll for seen devices and rssi") do |v|
     options[:signal_spitter] = true
   end
-  opts.on("--no-info", "For the purposes for fox hunting, don't info scan.  Some info may be missing, but there will be less gaps during tracking") do |v|
+  opts.on("--no-info", "For the purposes of fox hunting, don't info scan.  Some info may be missing, but there will be less gaps during tracking") do |v|
     options[:no_info_scan] = true
   end
   opts.on("--mohawk-api", "For the purposes of making a hat to cover a mohawk, shit out the ui as json at /dev/shm/blue_hydra.json") do |v|

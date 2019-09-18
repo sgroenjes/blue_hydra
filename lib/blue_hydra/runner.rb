@@ -23,6 +23,7 @@ module BlueHydra
                   :query_history,
                   :scanner_status,
                   :l2ping_queue,
+                  :hcitool_queue,
                   :result_thread,
                   :stunned,
                   :processing_speed
@@ -90,7 +91,7 @@ module BlueHydra
         self.result_queue    = Queue.new # parser thread  -> result thread
         self.info_scan_queue = Queue.new # result thread  -> discovery thread
         self.l2ping_queue    = Queue.new # result thread  -> discovery thread
-
+        self.hcitool_queue   = Queue.new # result thread  -> discovery thread
         # start the result processing thread
         start_result_thread
 
@@ -275,6 +276,7 @@ module BlueHydra
       self.result_queue    = nil
       self.info_scan_queue = nil
       self.l2ping_queue    = nil
+      self.hcitool_queue   = nil
     end
 
     # Start the thread which runs the specified command
@@ -337,15 +339,14 @@ module BlueHydra
       self.discovery_thread = Thread.new do
         begin
 
-          if BlueHydra.info_scan
-            discovery_time    = 30
-            discovery_timeout = 45
-          else
-            discovery_time    = 180
-            discovery_timeout = 195
-          end
+          # if BlueHydra.info_scan
+            discovery_time    = 15
+            discovery_timeout = 30
+          # else
+          #   discovery_time    = 180
+          #   discovery_timeout = 195
+          # end
           discovery_command = "#{File.expand_path('../../../bin/test-discovery', __FILE__)} --timeout #{discovery_time} -i #{BlueHydra.config["bt_device"]}"
-
           loop do
             begin
 
@@ -354,129 +355,172 @@ module BlueHydra
               bluetoothd_errors ||= 0
 
               # clear the queues
-              until info_scan_queue.empty? && l2ping_queue.empty?
+              # until info_scan_queue.empty? && l2ping_queue.empty?
                 # clear out entire info scan queue first
-                until info_scan_queue.empty?
+                # until info_scan_queue.empty?
 
-                  # reset interface first to get to a good base state
+                #   # reset interface first to get to a good base state
+                #   hci_reset
+
+                #   BlueHydra.logger.debug("Popping off info scan queue. Depth: #{ info_scan_queue.length}")
+
+                #   # grab a command out of the queue to run
+                #   command = info_scan_queue.pop
+                #   case command[:command]
+                #   when :info # classic mode devices
+                #     # run hcitool info against the specified address, capture
+                #     # errors, no need to capture stdout because the interesting
+                #     # stuff is gonna be in btmon anyway
+                #     info_errors = BlueHydra::Command.execute3("hcitool -i #{BlueHydra.config["bt_device"]} info #{command[:address]}",3)[:stderr]
+
+                #   when :leinfo # low energy devices
+                #     # run hcitool leinfo, capture errors
+                #     info_errors = BlueHydra::Command.execute3("hcitool -i #{BlueHydra.config["bt_device"]} leinfo --random #{command[:address]}",3)[:stderr]
+
+                #     # if we have errors fro le info scan attempt some
+                #     # additional trickery to grab the data in a few other ways
+                #     if info_errors == "Could not create connection: Input/output error"
+                #       info_errors = nil
+                #       BlueHydra.logger.debug("Random leinfo failed against #{command[:address]}")
+                #       hci_reset
+                #       info2_errors = BlueHydra::Command.execute3("hcitool -i #{BlueHydra.config["bt_device"]} leinfo --static #{command[:address]}",3)[:stderr]
+                #       if info2_errors == "Could not create connection: Input/output error"
+                #         BlueHydra.logger.debug("Static leinfo failed against #{command[:address]}")
+                #         hci_reset
+                #         info3_errors = BlueHydra::Command.execute3("hcitool -i #{BlueHydra.config["bt_device"]} leinfo #{command[:address]}",3)[:stderr]
+                #         if info3_errors == "Could not create connection: Input/output error"
+                #           BlueHydra.logger.debug("Default leinfo failed against #{command[:address]}")
+                #           BlueHydra.logger.debug("Default leinfo failed against #{command[:address]}")
+                #           BlueHydra.logger.debug("Default leinfo failed against #{command[:address]}")
+                #         end
+                #       end
+                #     end
+                #   else
+                #     BlueHydra.logger.error("Invalid command detected... #{command.inspect}")
+                #     info_errors = nil
+                #   end
+
+                #   # handle and log error output as needed
+                #   if info_errors
+                #     if info_errors.chomp =~ /connect: No route to host/i
+                #       # We could handle this as negative feedback if we want
+                #     elsif info_errors.chomp =~ /create connection: Input\/output error/i
+                #       # We failed to connect, not sure why, not sure we care
+                #     else
+                #       BlueHydra.logger.error("Error with info command... #{command.inspect}")
+                #       info_errors.split("\n").each do |ln|
+                #         BlueHydra.logger.error(ln)
+                #       end
+                #     end
+                #   end
+                # end
+
+                if hcitool_queue.empty?
+                  BlueHydra.logger.info("Queue empty, populating with fox MACs")
+                  BlueHydra.config["ui_inc_filter_mac"].each { |addr|
+                    # 15 seconds sounds good right?
+                    self.query_history[addr] ||= {}
+                    if(Time.now.to_i - 5) >= self.query_history[addr][:hcitool].to_i
+                      hcitool_queue.push({ command: :hcitool, address: addr })
+                      self.query_history[addr][:hcitool] = Time.now.to_i
+                    end
+                  }
+                end
+                unless hcitool_queue.empty?
                   hci_reset
-
-                  BlueHydra.logger.debug("Popping off info scan queue. Depth: #{ info_scan_queue.length}")
-
-                  # grab a command out of the queue to run
-                  command = info_scan_queue.pop
-                  case command[:command]
-                  when :info # classic mode devices
-                    # run hcitool info against the specified address, capture
-                    # errors, no need to capture stdout because the interesting
-                    # stuff is gonna be in btmon anyway
-                    info_errors = BlueHydra::Command.execute3("hcitool -i #{BlueHydra.config["bt_device"]} info #{command[:address]}",3)[:stderr]
-
-                  when :leinfo # low energy devices
-                    # run hcitool leinfo, capture errors
-                    info_errors = BlueHydra::Command.execute3("hcitool -i #{BlueHydra.config["bt_device"]} leinfo --random #{command[:address]}",3)[:stderr]
-
-                    # if we have errors fro le info scan attempt some
-                    # additional trickery to grab the data in a few other ways
-                    if info_errors == "Could not create connection: Input/output error"
-                      info_errors = nil
-                      BlueHydra.logger.debug("Random leinfo failed against #{command[:address]}")
-                      hci_reset
-                      info2_errors = BlueHydra::Command.execute3("hcitool -i #{BlueHydra.config["bt_device"]} leinfo --static #{command[:address]}",3)[:stderr]
-                      if info2_errors == "Could not create connection: Input/output error"
-                        BlueHydra.logger.debug("Static leinfo failed against #{command[:address]}")
-                        hci_reset
-                        info3_errors = BlueHydra::Command.execute3("hcitool -i #{BlueHydra.config["bt_device"]} leinfo #{command[:address]}",3)[:stderr]
-                        if info3_errors == "Could not create connection: Input/output error"
-                          BlueHydra.logger.debug("Default leinfo failed against #{command[:address]}")
-                          BlueHydra.logger.debug("Default leinfo failed against #{command[:address]}")
-                          BlueHydra.logger.debug("Default leinfo failed against #{command[:address]}")
-                        end
-                      end
+                  BlueHydra.logger.debug("Popping off hcitool queue. Depth: #{ hcitool_queue.length}")
+                  command = hcitool_queue.pop
+                  BlueHydra::Command.execute3("hcitool dc #{command[:address]}")
+                  hcitool_out = BlueHydra::Command.execute3("hcitool cc #{command[:address]} && hcitool rssi #{command[:address]}",2)
+                  if hcitool_out[:stderr]
+                    BlueHydra.logger.error("#{hcitool_out[:stderr]}")
+                    if hcitool_out[:stderr].chomp =~ /create connection: Input\/output error/i
+                      # only error I've encountered so far, not sure what or why 
+                      # but hoping if you let the baby sleep it off for a minute, it'll come back
+                      self.query_history[command[:address]][:hcitool] = Time.now.to_i + 10
                     end
-                  else
-                    BlueHydra.logger.error("Invalid command detected... #{command.inspect}")
-                    info_errors = nil
-                  end
-
-                  # handle and log error output as needed
-                  if info_errors
-                    if info_errors.chomp =~ /connect: No route to host/i
-                      # We could handle this as negative feedback if we want
-                    elsif info_errors.chomp =~ /create connection: Input\/output error/i
-                      # We failed to connect, not sure why, not sure we care
-                    else
-                      BlueHydra.logger.error("Error with info command... #{command.inspect}")
-                      info_errors.split("\n").each do |ln|
-                        BlueHydra.logger.error(ln)
-                      end
-                    end
+                  elsif hcitool_out[:stdout].chomp =~ /RSSI return value:/i
+                    # parse this bitch
+                    # BlueHydra.logger.debug("#{hcitool_out[:stdout]}")
+                    rssi = hcitool_out[:stdout].match(/-\d+/)
+                    # Adds rssi value to address in rssi_data, synchronizes with parser thread
+                    @rssi_data_mutex.synchronize {
+                      @rssi_data[command[:address]] ||= []
+                      @rssi_data[command[:address]] << {ts: Time.now.to_i, dbm: rssi}
+                    }
                   end
                 end
 
-                # run 1 l2ping a time while still checking if info scan queue
-                # is empty
-                unless l2ping_queue.empty?
-                  hci_reset
-                  BlueHydra.logger.debug("Popping off l2ping queue. Depth: #{ l2ping_queue.length}")
-                  command = l2ping_queue.pop
-                  l2ping_errors = BlueHydra::Command.execute3("l2ping -c 3 -i #{BlueHydra.config["bt_device"]} #{command[:address]}",5)[:stderr]
-                  if l2ping_errors
-                    if l2ping_errors.chomp =~ /connect: No route to host/i
-                      # We could handle this as negative feedback if we want
-                    elsif l2ping_errors.chomp =~ /connect: Host is down/i
-                      # Same as above
-                    elsif l2ping_errors.chomp =~ /create connection: Input\/output error/i
-                      # We failed to connect, not sure why, not sure we care
-                    elsif l2ping_errors.chomp =~ /connect: Connection refused/i
-                      #maybe we do care about this one? if it refused, it was there
-                    elsif l2ping_errors.chomp =~ /connect: Permission denied/i
-                      #this appears when we aren't root, but it also gets sent back from the remote host sometimes
-                    elsif l2ping_errors.chomp =~ /connect: Function not implemented/i
-                      # this isn't in the bluez code at all so it must be coming back from the remote host
-                    else
-                      BlueHydra.logger.error("Error with l2ping command... #{command.inspect}")
-                      l2ping_errors.split("\n").each do |ln|
-                        BlueHydra.logger.error(ln)
-                      end
-                    end
-                  end
-                end
-              end
+                # if l2ping_queue.empty?
+                #   BlueHydra.logger.info("L2ping queue empty, adding fox MACs")
+                #   BlueHydra.config["ui_inc_filter_mac"].each { |addr| 
+                #     if (Time.now.to_i - (60 * 7)) >= self.query_history[addr][:l2ping].to_i
+                #       l2ping_queue.push({ command: :l2ping, address: addr })
+                #       self.query_history[addr][:l2ping] = Time.now.to_i
+                #     end
+                #   }
+                # end
+                # unless l2ping_queue.empty?
+                #   hci_reset
+                #   BlueHydra.logger.debug("Popping off l2ping queue. Depth: #{ l2ping_queue.length}")
+                #   command = l2ping_queue.pop
+                #   l2ping_errors = BlueHydra::Command.execute3("l2ping -c 3 -i #{BlueHydra.config["bt_device"]} #{command[:address]}",5)[:stderr]
+                #   if l2ping_errors
+                #     if l2ping_errors.chomp =~ /connect: No route to host/i
+                #       # We could handle this as negative feedback if we want
+                #     elsif l2ping_errors.chomp =~ /connect: Host is down/i
+                #       # Same as above
+                #     elsif l2ping_errors.chomp =~ /create connection: Input\/output error/i
+                #       # We failed to connect, not sure why, not sure we care
+                #     elsif l2ping_errors.chomp =~ /connect: Connection refused/i
+                #       #maybe we do care about this one? if it refused, it was there
+                #     elsif l2ping_errors.chomp =~ /connect: Permission denied/i
+                #       #this appears when we aren't root, but it also gets sent back from the remote host sometimes
+                #     elsif l2ping_errors.chomp =~ /connect: Function not implemented/i
+                #       # this isn't in the bluez code at all so it must be coming back from the remote host
+                #     else
+                #       BlueHydra.logger.error("Error with l2ping command... #{command.inspect}")
+                #       l2ping_errors.split("\n").each do |ln|
+                #         BlueHydra.logger.error(ln)
+                #       end
+                #     end
+                #   end
+                # end
+              # end
 
               # another reset before going back to discovery
-              hci_reset
+              # hci_reset
 
               # hot loop avoidance, but run right before discovery to avoid any delay between discovery and info scan
               sleep 1
 
               # run test-discovery
               # do a discovery
-              self.scanner_status[:test_discovery] = Time.now.to_i unless BlueHydra.daemon_mode
-              discovery_errors = BlueHydra::Command.execute3(discovery_command,discovery_timeout)[:stderr]
-              if discovery_errors
-                if discovery_errors =~ /org.bluez.Error.NotReady/
-                  raise BluezNotReadyError
-                elsif discovery_errors =~ /dbus.exceptions.DBusException/i
-                  # This happens when bluetoothd isn't running or otherwise broken off the dbus
-                  # systemd
-                  #  dbus.exceptions.DBusException: org.freedesktop.systemd1.NoSuchUnit: Unit dbus-org.bluez.service not found.
-                  #  dbus.exceptions.DBusException: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.[0-9]{5} was not provided by any .service files
-                  # gentoo (not systemd)
-                  #  dbus.exceptions.DBusException: org.freedesktop.DBus.Error.ServiceUnknown: The name org.bluez was not provided by any .service files
-                  #  dbus.exceptions.DBusException: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.[0-9]{3} was not provided by any .service files
-                  raise BluetoothdDbusError
-                elsif discovery_errors =~ /KeyboardInterrupt/
-                  # Sometimes the interrupt gets passed to test-discovery so assume it was meant for us
-                  BlueHydra.logger.info("BlueHydra Killed! Exiting... SIGINT")
-                  exit
-                else
-                  BlueHydra.logger.error("Error with test-discovery script..")
-                  discovery_errors.split("\n").each do |ln|
-                    BlueHydra.logger.error(ln)
-                  end
-                end
-              end
+              # self.scanner_status[:test_discovery] = Time.now.to_i unless BlueHydra.daemon_mode
+              # discovery_errors = BlueHydra::Command.execute3(discovery_command,discovery_timeout)[:stderr]
+              # if discovery_errors
+              #   if discovery_errors =~ /org.bluez.Error.NotReady/
+              #     raise BluezNotReadyError
+              #   elsif discovery_errors =~ /dbus.exceptions.DBusException/i
+              #     # This happens when bluetoothd isn't running or otherwise broken off the dbus
+              #     # systemd
+              #     #  dbus.exceptions.DBusException: org.freedesktop.systemd1.NoSuchUnit: Unit dbus-org.bluez.service not found.
+              #     #  dbus.exceptions.DBusException: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.[0-9]{5} was not provided by any .service files
+              #     # gentoo (not systemd)
+              #     #  dbus.exceptions.DBusException: org.freedesktop.DBus.Error.ServiceUnknown: The name org.bluez was not provided by any .service files
+              #     #  dbus.exceptions.DBusException: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.[0-9]{3} was not provided by any .service files
+              #     raise BluetoothdDbusError
+              #   elsif discovery_errors =~ /KeyboardInterrupt/
+              #     # Sometimes the interrupt gets passed to test-discovery so assume it was meant for us
+              #     BlueHydra.logger.info("BlueHydra Killed! Exiting... SIGINT")
+              #     exit
+              #   else
+              #     BlueHydra.logger.error("Error with test-discovery script..")
+              #     discovery_errors.split("\n").each do |ln|
+              #       BlueHydra.logger.error(ln)
+              #     end
+              #   end
+              # end
 
               bluez_errors = 0
               bluetoothd_errors = 0
@@ -782,7 +826,8 @@ module BlueHydra
 
             address = (attrs[:address]||[]).uniq.first
 
-            if address
+            # we don't care about addresses that aren't the foxes
+            if address and BlueHydra.config["ui_inc_filter_mac"].one? {|element| element.include? address.split(":")[2,4].join(":")}
 
               if !BlueHydra.daemon_mode || BlueHydra.file_api
                 tracker = CliUserInterfaceTracker.new(self, chunk, attrs, address)
@@ -1013,7 +1058,7 @@ module BlueHydra
                 x.last_seen < (Time.now.to_i - (60 * 7)) && x.last_seen > (Time.now.to_i - (60*15))
               }.each do |device|
                 self.query_history[device.address] ||= {}
-                if (Time.now.to_i - (60 * 7)) >= self.query_history[device.address][:l2ping].to_i
+                if (Time.now.to_i - (60 * 7)) >= self.query_history[device.address][:l2ping].to_i and BlueHydra.config["ui_inc_filter_mac"].one? {|element| element.include? device.address.split(":")[2,4].join(":")}
 
                   l2ping_queue.push({
                     command: :l2ping,
