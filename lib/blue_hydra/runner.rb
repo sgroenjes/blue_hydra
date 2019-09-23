@@ -415,39 +415,42 @@ module BlueHydra
                 #   end
                 # end
 
-                if hcitool_queue.empty?
+                if hcitool_queue.empty? && !@stopping
                   BlueHydra.logger.info("Queue empty, populating with fox MACs")
                   BlueHydra.config["ui_inc_filter_mac"].each { |addr|
                     # 15 seconds sounds good right?
-                    self.query_history[addr] ||= {}
-                    if(Time.now.to_i - 5) >= self.query_history[addr][:hcitool].to_i
+                    # self.query_history[addr] ||= {}
+                    # if(Time.now.to_i - 5) >= self.query_history[addr][:hcitool].to_i
                       hcitool_queue.push({ command: :hcitool, address: addr })
-                      self.query_history[addr][:hcitool] = Time.now.to_i
-                    end
+                      # self.query_history[addr][:hcitool] = Time.now.to_i
+                    # end
                   }
                 end
                 unless hcitool_queue.empty?
-                  hci_reset
+                  # hci_reset
                   BlueHydra.logger.debug("Popping off hcitool queue. Depth: #{ hcitool_queue.length}")
                   command = hcitool_queue.pop
                   BlueHydra::Command.execute3("hcitool dc #{command[:address]}")
+                  sleep 1
                   hcitool_out = BlueHydra::Command.execute3("hcitool cc #{command[:address]} && hcitool rssi #{command[:address]}",2)
-                  if hcitool_out[:stderr]
+                  if hcitool_out[:stdout]
+                    # parse this bitch
+                    BlueHydra.logger.info("#{hcitool_out[:stdout]}")
+                    if hcitool_out[:stdout].chomp =~ /RSSI return value:/i
+                      rssi = hcitool_out[:stdout].match(/-\d+/)
+                      # Adds rssi value to address in rssi_data, synchronizes with parser thread
+                      @rssi_data_mutex.synchronize {
+                        @rssi_data[command[:address]] ||= []
+                        @rssi_data[command[:address]] << {ts: Time.now.to_i, dbm: rssi}
+                      }
+                    end
+                  elsif hcitool_out[:stderr]
                     BlueHydra.logger.error("#{hcitool_out[:stderr]}")
                     if hcitool_out[:stderr].chomp =~ /create connection: Input\/output error/i
                       # only error I've encountered so far, not sure what or why 
                       # but hoping if you let the baby sleep it off for a minute, it'll come back
-                      self.query_history[command[:address]][:hcitool] = Time.now.to_i + 10
+                      # self.query_history[command[:address]][:hcitool] = Time.now.to_i + 10
                     end
-                  elsif hcitool_out[:stdout].chomp =~ /RSSI return value:/i
-                    # parse this bitch
-                    # BlueHydra.logger.debug("#{hcitool_out[:stdout]}")
-                    rssi = hcitool_out[:stdout].match(/-\d+/)
-                    # Adds rssi value to address in rssi_data, synchronizes with parser thread
-                    @rssi_data_mutex.synchronize {
-                      @rssi_data[command[:address]] ||= []
-                      @rssi_data[command[:address]] << {ts: Time.now.to_i, dbm: rssi}
-                    }
                   end
                 end
 
@@ -971,13 +974,13 @@ module BlueHydra
                   if @rssi_data
                     @rssi_data_mutex.synchronize {
                       client.puts JSON.generate(
-                        @rssi_data.slice(*BlueHydra.config["ui_inc_filter_mac"]).map do |address, address_meta|
+                        @rssi_data.slice(*BlueHydra.config["ui_inc_filter_mac"]).map { |address, address_meta|
                           datas = @rssi_data[address].select{|d| d[:ts] > Time.now.to_i - 20}
                           datas.map do |datum|
                             datum[:mac] = address
                             datum
                           end
-                        end
+                        }.flatten()
                       )
                     }
                   end
