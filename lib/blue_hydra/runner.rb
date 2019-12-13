@@ -340,7 +340,7 @@ module BlueHydra
         begin
 
           # if BlueHydra.info_scan
-            discovery_time    = 15
+            discovery_time    = 5
             discovery_timeout = 30
           # else
           #   discovery_time    = 180
@@ -439,7 +439,8 @@ module BlueHydra
                     # parse this bitch
                     BlueHydra.logger.info("#{hcitool_out[:stdout]}")
                     if hcitool_out[:stdout].chomp =~ /RSSI return value:/i
-                      rssi = hcitool_out[:stdout].match(/-\d+/)
+                      rssi = hcitool_out[:stdout].match(/[-\d+]/)
+                      BlueHydra.logger.debug("#{rssi}")
                       # Adds rssi value to address in rssi_data, synchronizes with parser thread
                       @rssi_data_mutex.synchronize {
                         @rssi_data[command[:address]] ||= []
@@ -980,9 +981,10 @@ module BlueHydra
                 end
                 if magic_word == 'bluetooth'
                   if @rssi_data
+                    list = BlueHydra.config["ui_inc_filter_mac"] + BlueHydra.config["ui_inc_filter_prox"]
                     @rssi_data_mutex.synchronize {
                       client.puts JSON.generate(
-                        @rssi_data.slice(*BlueHydra.config["ui_inc_filter_mac"]).map { |address, address_meta|
+                        @rssi_data.slice(*list).map { |address, address_meta|
                           datas = @rssi_data[address].select{|d| d[:ts] > Time.now.to_i - 20}
                           datas.map do |datum|
                             datum[:mac] = address
