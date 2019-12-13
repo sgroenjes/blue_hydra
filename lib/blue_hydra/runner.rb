@@ -355,8 +355,8 @@ module BlueHydra
               bluetoothd_errors ||= 0
 
               # clear the queues
-              # until info_scan_queue.empty? && l2ping_queue.empty?
-                # clear out entire info scan queue first
+              until hcitool_queue.empty?
+                # # clear out entire info scan queue first
                 # until info_scan_queue.empty?
 
                 #   # reset interface first to get to a good base state
@@ -415,18 +415,20 @@ module BlueHydra
                 #   end
                 # end
 
-                if hcitool_queue.empty? && !@stopping
-                  BlueHydra.logger.info("Queue empty, populating with fox MACs")
-                  BlueHydra.config["ui_inc_filter_mac"].each { |addr|
-                    # 15 seconds sounds good right?
-                    # self.query_history[addr] ||= {}
-                    # if(Time.now.to_i - 5) >= self.query_history[addr][:hcitool].to_i
-                      hcitool_queue.push({ command: :hcitool, address: addr })
-                      # self.query_history[addr][:hcitool] = Time.now.to_i
-                    # end
-                  }
-                end
-                unless hcitool_queue.empty?
+                # if hcitool_queue.empty? && !@stopping
+                #   BlueHydra.logger.info("Queue empty, populating with fox MACs")
+                #   BlueHydra.config["ui_inc_filter_mac"].each { |addr|
+                #     # 15 seconds sounds good right?
+                #     # self.query_history[addr] ||= {}
+                #     # if(Time.now.to_i - 5) >= self.query_history[addr][:hcitool].to_i
+                #       hcitool_queue.push({ command: :hcitool, address: addr })
+                #       # self.query_history[addr][:hcitool] = Time.now.to_i
+                #     # end
+                #   }
+                # end
+
+                # SAMTAG - I think this was working for the bt tracking fox which is ?nonbeaconing?
+                if( !hcitool_queue.empty? )
                   # hci_reset
                   BlueHydra.logger.debug("Popping off hcitool queue. Depth: #{ hcitool_queue.length}")
                   command = hcitool_queue.pop
@@ -455,13 +457,11 @@ module BlueHydra
                 end
 
                 # if l2ping_queue.empty?
-                #   BlueHydra.logger.info("L2ping queue empty, adding fox MACs")
-                #   BlueHydra.config["ui_inc_filter_mac"].each { |addr| 
-                #     if (Time.now.to_i - (60 * 7)) >= self.query_history[addr][:l2ping].to_i
-                #       l2ping_queue.push({ command: :l2ping, address: addr })
-                #       self.query_history[addr][:l2ping] = Time.now.to_i
-                #     end
-                #   }
+                  # BlueHydra.logger.info("L2ping queue empty, adding fox MACs")
+                  # if (Time.now.to_i - (60 * 7)) >= self.query_history[addr][:l2ping].to_i
+                    # l2ping_queue.push({ command: :l2ping, address: addr })
+                    # self.query_history[addr][:l2ping] = Time.now.to_i
+                  # end
                 # end
                 # unless l2ping_queue.empty?
                 #   hci_reset
@@ -489,41 +489,50 @@ module BlueHydra
                 #     end
                 #   end
                 # end
-              # end
+              end
 
               # another reset before going back to discovery
-              # hci_reset
+              hci_reset
 
               # hot loop avoidance, but run right before discovery to avoid any delay between discovery and info scan
               sleep 1
 
+              # SAMTAG - I think this is good for finding the beaconing bt devices (easy,medium,hard)
               # run test-discovery
               # do a discovery
-              # self.scanner_status[:test_discovery] = Time.now.to_i unless BlueHydra.daemon_mode
-              # discovery_errors = BlueHydra::Command.execute3(discovery_command,discovery_timeout)[:stderr]
-              # if discovery_errors
-              #   if discovery_errors =~ /org.bluez.Error.NotReady/
-              #     raise BluezNotReadyError
-              #   elsif discovery_errors =~ /dbus.exceptions.DBusException/i
-              #     # This happens when bluetoothd isn't running or otherwise broken off the dbus
-              #     # systemd
-              #     #  dbus.exceptions.DBusException: org.freedesktop.systemd1.NoSuchUnit: Unit dbus-org.bluez.service not found.
-              #     #  dbus.exceptions.DBusException: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.[0-9]{5} was not provided by any .service files
-              #     # gentoo (not systemd)
-              #     #  dbus.exceptions.DBusException: org.freedesktop.DBus.Error.ServiceUnknown: The name org.bluez was not provided by any .service files
-              #     #  dbus.exceptions.DBusException: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.[0-9]{3} was not provided by any .service files
-              #     raise BluetoothdDbusError
-              #   elsif discovery_errors =~ /KeyboardInterrupt/
-              #     # Sometimes the interrupt gets passed to test-discovery so assume it was meant for us
-              #     BlueHydra.logger.info("BlueHydra Killed! Exiting... SIGINT")
-              #     exit
-              #   else
-              #     BlueHydra.logger.error("Error with test-discovery script..")
-              #     discovery_errors.split("\n").each do |ln|
-              #       BlueHydra.logger.error(ln)
-              #     end
-              #   end
-              # end
+              BlueHydra.logger.debug("DISCOVER(EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE)Y")
+
+              BlueHydra.logger.debug(BlueHydra.config["ui_inc_filter_prox"][0])
+              tracking_addr = BlueHydra.config["ui_inc_filter_prox"][0]
+              if ( tracking_addr != '')
+                BlueHydra.logger.debug(BlueHydra.config["ui_inc_filter_prox"][0])
+                hcitool_queue.push({ address: tracking_addr })
+              end
+              self.scanner_status[:test_discovery] = Time.now.to_i unless BlueHydra.daemon_mode
+              discovery_errors = BlueHydra::Command.execute3(discovery_command,discovery_timeout)[:stderr]
+              if discovery_errors
+                if discovery_errors =~ /org.bluez.Error.NotReady/
+                  raise BluezNotReadyError
+                elsif discovery_errors =~ /dbus.exceptions.DBusException/i
+                  # This happens when bluetoothd isn't running or otherwise broken off the dbus
+                  # systemd
+                  #  dbus.exceptions.DBusException: org.freedesktop.systemd1.NoSuchUnit: Unit dbus-org.bluez.service not found.
+                  #  dbus.exceptions.DBusException: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.[0-9]{5} was not provided by any .service files
+                  # gentoo (not systemd)
+                  #  dbus.exceptions.DBusException: org.freedesktop.DBus.Error.ServiceUnknown: The name org.bluez was not provided by any .service files
+                  #  dbus.exceptions.DBusException: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.[0-9]{3} was not provided by any .service files
+                  raise BluetoothdDbusError
+                elsif discovery_errors =~ /KeyboardInterrupt/
+                  # Sometimes the interrupt gets passed to test-discovery so assume it was meant for us
+                  BlueHydra.logger.info("BlueHydra Killed! Exiting... SIGINT")
+                  exit
+                else
+                  BlueHydra.logger.error("Error with test-discovery script..")
+                  discovery_errors.split("\n").each do |ln|
+                    BlueHydra.logger.error(ln)
+                  end
+                end
+              end
 
               bluez_errors = 0
               bluetoothd_errors = 0
@@ -829,8 +838,7 @@ module BlueHydra
 
             address = (attrs[:address]||[]).uniq.first
 
-            # we don't care about addresses that aren't the foxes
-            if address and BlueHydra.config["ui_inc_filter_mac"].one? {|element| element.include? address.split(":")[2,4].join(":")}
+            if address
 
               if !BlueHydra.daemon_mode || BlueHydra.file_api
                 tracker = CliUserInterfaceTracker.new(self, chunk, attrs, address)
@@ -1061,7 +1069,7 @@ module BlueHydra
                 x.last_seen < (Time.now.to_i - (60 * 7)) && x.last_seen > (Time.now.to_i - (60*15))
               }.each do |device|
                 self.query_history[device.address] ||= {}
-                if (Time.now.to_i - (60 * 7)) >= self.query_history[device.address][:l2ping].to_i and BlueHydra.config["ui_inc_filter_mac"].one? {|element| element.include? device.address.split(":")[2,4].join(":")}
+                if (Time.now.to_i - (60 * 7)) >= self.query_history[device.address][:l2ping].to_i
 
                   l2ping_queue.push({
                     command: :l2ping,
